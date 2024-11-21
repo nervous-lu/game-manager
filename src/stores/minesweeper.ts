@@ -66,6 +66,7 @@ export const useMinesweeperStore = defineStore('minesweeper', () => {
     placeMines(row, col)
     calculateNeighborMines()
     state.value.gameStatus = 'playing'
+    revealCell(row, col)
   }
 
   // 放置地雷
@@ -81,13 +82,14 @@ export const useMinesweeperStore = defineStore('minesweeper', () => {
       // 确保第一次点击的位置及其周围没有地雷
       if (
         Math.abs(row - firstRow) <= 1 && 
-        Math.abs(col - firstCol) <= 1
-      ) continue
-      
-      if (!minePositions.has(pos)) {
-        minePositions.add(pos)
-        state.value.board[row][col].isMine = true
+        Math.abs(col - firstCol) <= 1 ||
+        minePositions.has(pos)
+      ) {
+        continue
       }
+      
+      minePositions.add(pos)
+      state.value.board[row][col].isMine = true
     }
   }
 
@@ -102,21 +104,21 @@ export const useMinesweeperStore = defineStore('minesweeper', () => {
 
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
-        if (state.value.board[row][col].isMine) continue
-
-        let count = 0
-        for (const [dx, dy] of directions) {
-          const newRow = row + dx
-          const newCol = col + dy
-          if (
-            newRow >= 0 && newRow < rows &&
-            newCol >= 0 && newCol < cols &&
-            state.value.board[newRow][newCol].isMine
-          ) {
-            count++
+        if (!state.value.board[row][col].isMine) {
+          let count = 0
+          for (const [dx, dy] of directions) {
+            const newRow = row + dx
+            const newCol = col + dy
+            if (
+              newRow >= 0 && newRow < rows &&
+              newCol >= 0 && newCol < cols &&
+              state.value.board[newRow][newCol].isMine
+            ) {
+              count++
+            }
           }
+          state.value.board[row][col].neighborMines = count
         }
-        state.value.board[row][col].neighborMines = count
       }
     }
   }
