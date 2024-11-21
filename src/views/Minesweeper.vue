@@ -43,7 +43,7 @@
       <van-button 
         type="primary" 
         block 
-        @click="store.resetGame"
+        @click="startGame"
         size="large"
       >
         {{ store.gameStatus === 'playing' ? '重新开始' : '开始游戏' }}
@@ -53,16 +53,10 @@
       </van-button>
     </div>
 
-    <div class="board-container" :class="store.difficulty">
+    <div class="board-container">
       <div 
         class="board"
-        :style="{
-          gridTemplateRows: `repeat(${store.boardSize.rows}, 1fr)`,
-          gridTemplateColumns: `repeat(${store.boardSize.cols}, 1fr)`
-        }"
-        @contextmenu.prevent
-        @touchstart.prevent="handleTouchStart"
-        @touchend.prevent="handleTouchEnd"
+        :class="store.difficulty"
       >
         <div
           v-for="(row, rowIndex) in store.board"
@@ -82,7 +76,9 @@
               }
             ]"
             @click="handleCellClick(rowIndex, colIndex)"
-            @contextmenu="handleCellRightClick(rowIndex, colIndex)"
+            @contextmenu.prevent="handleCellRightClick(rowIndex, colIndex)"
+            @touchstart="handleTouchStart($event, rowIndex, colIndex)"
+            @touchend.prevent="handleTouchEnd"
           >
             <template v-if="cell.isFlagged">
               <span class="flag">🚩</span>
@@ -112,7 +108,7 @@
           {{ store.gameStatus === 'won' ? '🎯' : '💣' }}
         </div>
         <div class="stats">
-          <div class="time">用时：{{ formatTime(timeElapsed) }}</div>
+          <div class="time">时：{{ formatTime(timeElapsed) }}</div>
           <div class="difficulty">难度：{{ getDifficultyLabel(store.difficulty) }}</div>
           <div class="mines">剩余地雷：{{ store.remainingMines }}</div>
         </div>
@@ -144,35 +140,22 @@ const formatTime = (seconds: number): string => {
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
 }
 
-const handleTouchStart = (e: TouchEvent) => {
+const handleTouchStart = (_e: TouchEvent, row: number, col: number) => {
+
   if (store.gameStatus !== 'playing') return
   
-  const touch = e.touches[0]
-  const board = e.currentTarget as HTMLElement
-  const rect = board.getBoundingClientRect()
+  touchedCell = { row, col }
+  touchStartTime = Date.now()
   
-  const cellWidth = rect.width / store.boardSize.cols
-  const cellHeight = rect.height / store.boardSize.rows
-  
-  const col = Math.floor((touch.clientX - rect.left) / cellWidth)
-  const row = Math.floor((touch.clientY - rect.top) / cellHeight)
-  
-  if (row >= 0 && row < store.boardSize.rows && col >= 0 && col < store.boardSize.cols) {
-    touchedCell = { row, col }
-    touchStartTime = Date.now()
-    
-    touchTimer = setTimeout(() => {
-      if (touchedCell) {
-        handleCellRightClick(touchedCell.row, touchedCell.col)
-        touchedCell = null
-      }
-    }, LONG_PRESS_DURATION)
-  }
+  touchTimer = setTimeout(() => {
+    if (touchedCell) {
+      handleCellRightClick(touchedCell.row, touchedCell.col)
+      touchedCell = null
+    }
+  }, LONG_PRESS_DURATION)
 }
 
-const handleTouchEnd = (e: TouchEvent) => {
-  e.preventDefault()
-  
+const handleTouchEnd = () => {
   if (touchTimer) {
     clearTimeout(touchTimer)
     touchTimer = null
@@ -186,12 +169,9 @@ const handleTouchEnd = (e: TouchEvent) => {
 }
 
 const handleCellClick = (row: number, col: number) => {
-  if (store.gameStatus === 'waiting') {
-    store.startGame(row, col)
-    startTimer()
-  } else if (store.gameStatus === 'playing') {
+  if (store.gameStatus === 'playing') {
     store.revealCell(row, col)
-    if (store.isGameOver) {
+    if (store.gameStatus === 'won' || store.gameStatus === 'lost') {
       stopTimer()
       showResult.value = true
     }
@@ -245,6 +225,9 @@ const handleBack = async () => {
 
 const setDifficulty = (difficulty: string) => {
   store.setDifficulty(difficulty as 'easy' | 'medium' | 'hard')
+  stopTimer()
+  timeElapsed.value = 0
+  store.resetGame()
 }
 
 onMounted(() => {
@@ -293,6 +276,23 @@ const getDifficultyDesc = (level: string) => {
   }
   return descs[level as keyof typeof descs]
 }
+
+// 修改 startGame 函数
+const startGame = () => {
+  stopTimer()
+  timeElapsed.value = 0
+  store.resetGame()
+  store.setGameStatus('playing')  // 直接设置为 playing 状态
+  startTimer()
+}
+
+// 添加游戏状态监听
+watch(() => store.gameStatus, (newStatus) => {
+  if (newStatus === 'won' || newStatus === 'lost') {
+    stopTimer()
+    showResult.value = true
+  }
+})
 </script>
 
 <style lang="scss" scoped>
@@ -428,18 +428,6 @@ const getDifficultyDesc = (level: string) => {
     margin-top: 24px;
     padding-bottom: 40px;
 
-    &.easy {
-      --cell-size: min(35px, calc(90vw / 9));
-    }
-
-    &.medium {
-      --cell-size: min(30px, calc(90vw / 16));
-    }
-
-    &.hard {
-      --cell-size: min(25px, calc(90vw / 30));
-    }
-
     .board {
       display: grid;
       gap: 1px;
@@ -448,11 +436,20 @@ const getDifficultyDesc = (level: string) => {
       padding: 1px;
       touch-action: none;
       user-select: none;
-      width: fit-content;
-      margin: 0 auto;
 
-      .board-row {
-        display: contents;
+      &.easy {
+        grid-template-columns: repeat(9, var(--cell-size));
+        --cell-size: min(35px, calc(90vw / 9));
+      }
+
+      &.medium {
+        grid-template-columns: repeat(16, var(--cell-size));
+        --cell-size: min(30px, calc(90vw / 16));
+      }
+
+      &.hard {
+        grid-template-columns: repeat(30, var(--cell-size));
+        --cell-size: min(25px, calc(90vw / 30));
       }
 
       .cell {
@@ -461,34 +458,20 @@ const getDifficultyDesc = (level: string) => {
         display: flex;
         align-items: center;
         justify-content: center;
+        font-size: calc(var(--cell-size) * 0.5);
         font-weight: bold;
-        font-size: calc(var(--cell-size) * 0.6);
+        background: #c0c0c0;
+        border: 2px solid;
+        border-top-color: #fff;
+        border-left-color: #fff;
+        border-right-color: #7b7b7b;
+        border-bottom-color: #7b7b7b;
         cursor: pointer;
-        user-select: none;
-        transition: background-color 0.2s ease;
-        touch-action: none;
-        -webkit-tap-highlight-color: transparent;
-
-        &.hidden {
-          background: #c0c0c0;
-          border-top: 2px solid #fff;
-          border-left: 2px solid #fff;
-          border-right: 2px solid #7b7b7b;
-          border-bottom: 2px solid #7b7b7b;
-
-          &:active {
-            background: #bdbdbd;
-            border: 1px solid #7b7b7b;
-          }
-        }
+        transition: all 0.1s ease;
 
         &.revealed {
           background: #e0e0e0;
-          border: 1px solid #bdbdbd;
-
-          &.mine {
-            background: #ff4444;
-          }
+          border: 1px solid #999;
 
           &.n1 { color: #0000ff; }
           &.n2 { color: #008000; }
@@ -502,10 +485,6 @@ const getDifficultyDesc = (level: string) => {
 
         &.flagged {
           background: #c0c0c0;
-          border-top: 2px solid #fff;
-          border-left: 2px solid #fff;
-          border-right: 2px solid #7b7b7b;
-          border-bottom: 2px solid #7b7b7b;
         }
 
         &.hover:active {
@@ -514,18 +493,7 @@ const getDifficultyDesc = (level: string) => {
         }
 
         .flag, .mine {
-          display: inline-block;
-          animation: popIn 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-        }
-
-        &.revealed {
-          animation: reveal 0.3s ease;
-        }
-
-        &.n1, &.n2, &.n3, &.n4, &.n5, &.n6, &.n7, &.n8 {
-          font-family: 'Consolas', monospace;
-          font-weight: bold;
-          animation: numberIn 0.3s ease;
+          font-size: calc(var(--cell-size) * 0.7);
         }
       }
     }

@@ -61,34 +61,57 @@ export const useMinesweeperStore = defineStore('minesweeper', () => {
     state.value.gameStatus = 'waiting'
   }
 
-  // 开始游戏
-  function startGame(row: number, col: number) {
-    placeMines(row, col)
-    calculateNeighborMines()
-    state.value.gameStatus = 'playing'
+  // 添加 initGame 函数
+  function initGame() {
+    resetGame()
+    state.value.gameStatus = 'waiting'
   }
 
-  // 放置地雷
-  function placeMines(firstRow: number, firstCol: number) {
-    const { rows, cols } = state.value.boardSize
-    const minePositions = new Set<string>()
+  // 开始游戏
+  function startGame(row: number, col: number) {
+    // 先重置游戏状态
+    resetGame()
     
-    while (minePositions.size < state.value.mineCount) {
-      const row = Math.floor(Math.random() * rows)
-      const col = Math.floor(Math.random() * cols)
-      const pos = `${row},${col}`
-      
-      // 确保第一次点击的位置及其周围没有地雷
-      if (
-        Math.abs(row - firstRow) <= 1 && 
-        Math.abs(col - firstCol) <= 1
-      ) continue
-      
-      if (!minePositions.has(pos)) {
-        minePositions.add(pos)
-        state.value.board[row][col].isMine = true
+    // 确保第一次点击的位置及其周围没有地雷
+    const { rows, cols } = state.value.boardSize
+    const safeArea = new Set<string>()
+    
+    // 收集安全区域的坐标（包括点击位置及其周围8个格子）
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        const newRow = row + i
+        const newCol = col + j
+        if (newRow >= 0 && newRow < rows && newCol >= 0 && newCol < cols) {
+          safeArea.add(`${newRow},${newCol}`)
+        }
       }
     }
+
+    // 放置地雷，避开安全区域
+    let minesPlaced = 0
+    const maxAttempts = rows * cols * 2  // 防止无限循环
+    let attempts = 0
+    
+    while (minesPlaced < state.value.mineCount && attempts < maxAttempts) {
+      const mineRow = Math.floor(Math.random() * rows)
+      const mineCol = Math.floor(Math.random() * cols)
+      const pos = `${mineRow},${mineCol}`
+      
+      if (!safeArea.has(pos) && !state.value.board[mineRow][mineCol].isMine) {
+        state.value.board[mineRow][mineCol].isMine = true
+        minesPlaced++
+      }
+      attempts++
+    }
+
+    // 计算每个格子周围的地雷数
+    calculateNeighborMines()
+    
+    // 设置游戏状态为进行中
+    state.value.gameStatus = 'playing'
+    
+    // 揭示第一次点击的格子及其周围的空白区域
+    revealCell(row, col)
   }
 
   // 计算周围地雷数
@@ -126,6 +149,44 @@ export const useMinesweeperStore = defineStore('minesweeper', () => {
     const cell = state.value.board[row][col]
     if (cell.isRevealed || cell.isFlagged || state.value.gameStatus !== 'playing') return
 
+    // 如果是第一次点击，需要初始化地雷
+    if (!state.value.board.some(row => row.some(cell => cell.isMine))) {
+      // 放置地雷，避开第一次点击的位置及其周围
+      const { rows, cols } = state.value.boardSize
+      const safeArea = new Set<string>()
+      
+      // 收集安全区域的坐标
+      for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+          const newRow = row + i
+          const newCol = col + j
+          if (newRow >= 0 && newRow < rows && newCol >= 0 && newCol < cols) {
+            safeArea.add(`${newRow},${newCol}`)
+          }
+        }
+      }
+
+      // 放置地雷
+      let minesPlaced = 0
+      const maxAttempts = rows * cols * 2
+      let attempts = 0
+      
+      while (minesPlaced < state.value.mineCount && attempts < maxAttempts) {
+        const mineRow = Math.floor(Math.random() * rows)
+        const mineCol = Math.floor(Math.random() * cols)
+        const pos = `${mineRow},${mineCol}`
+        
+        if (!safeArea.has(pos) && !state.value.board[mineRow][mineCol].isMine) {
+          state.value.board[mineRow][mineCol].isMine = true
+          minesPlaced++
+        }
+        attempts++
+      }
+
+      calculateNeighborMines()
+    }
+
+    // 继续原来的揭示逻辑
     cell.isRevealed = true
     cell.status = 'revealed'
 
@@ -135,34 +196,26 @@ export const useMinesweeperStore = defineStore('minesweeper', () => {
       return
     }
 
+    // 如果是空白格子，自动揭示周围的格子
     if (cell.neighborMines === 0) {
-      revealNeighbors(row, col)
+      const { rows, cols } = state.value.boardSize
+      for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+          const newRow = row + i
+          const newCol = col + j
+          if (
+            newRow >= 0 && newRow < rows &&
+            newCol >= 0 && newCol < cols &&
+            !state.value.board[newRow][newCol].isRevealed &&
+            !state.value.board[newRow][newCol].isFlagged
+          ) {
+            revealCell(newRow, newCol)
+          }
+        }
+      }
     }
 
     checkWin()
-  }
-
-  // 揭示周围格子
-  function revealNeighbors(row: number, col: number) {
-    const { rows, cols } = state.value.boardSize
-    const directions = [
-      [-1, -1], [-1, 0], [-1, 1],
-      [0, -1],           [0, 1],
-      [1, -1],  [1, 0],  [1, 1]
-    ]
-
-    for (const [dx, dy] of directions) {
-      const newRow = row + dx
-      const newCol = col + dy
-      if (
-        newRow >= 0 && newRow < rows &&
-        newCol >= 0 && newCol < cols &&
-        !state.value.board[newRow][newCol].isRevealed &&
-        !state.value.board[newRow][newCol].isFlagged
-      ) {
-        revealCell(newRow, newCol)
-      }
-    }
   }
 
   // 标记地雷
@@ -181,7 +234,7 @@ export const useMinesweeperStore = defineStore('minesweeper', () => {
     }
   }
 
-  // 揭示所有地雷
+  // 揭��所有地雷
   function revealAllMines() {
     state.value.board.forEach(row => {
       row.forEach(cell => {
@@ -195,11 +248,15 @@ export const useMinesweeperStore = defineStore('minesweeper', () => {
 
   // 检查是否胜利
   function checkWin() {
-    const allNonMinesRevealed = state.value.board.every(row =>
-      row.every(cell => cell.isMine || cell.isRevealed)
+    // 只有当所有非地雷格子都被揭示，且所有地雷都未被揭示或被正确标记时才算胜利
+    const allSafe = state.value.board.every(row =>
+      row.every(cell =>
+        (cell.isMine && (cell.isFlagged || !cell.isRevealed)) || 
+        (!cell.isMine && cell.isRevealed)
+      )
     )
     
-    if (allNonMinesRevealed) {
+    if (allSafe) {
       state.value.gameStatus = 'won'
       // 自动标记所有未标记的地雷
       state.value.board.forEach(row => {
@@ -220,6 +277,11 @@ export const useMinesweeperStore = defineStore('minesweeper', () => {
     resetGame()
   }
 
+  // 添加 setGameStatus 函数
+  function setGameStatus(status: 'waiting' | 'playing' | 'won' | 'lost') {
+    state.value.gameStatus = status
+  }
+
   return {
     board: computed(() => state.value.board),
     difficulty: computed(() => state.value.difficulty),
@@ -231,7 +293,9 @@ export const useMinesweeperStore = defineStore('minesweeper', () => {
     startGame,
     revealCell,
     toggleFlag,
-    setDifficulty
+    setDifficulty,
+    setGameStatus,
+    initGame
   }
 })
 
