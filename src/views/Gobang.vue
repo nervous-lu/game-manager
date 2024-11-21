@@ -42,7 +42,7 @@
       <van-button 
         type="primary" 
         block 
-        @click="store.gameStatus === 'playing' ? store.resetGame() : store.startGame()"
+        @click="startGame"
         size="large"
       >
         {{ store.gameStatus === 'playing' ? '重新开始' : '开始游戏' }}
@@ -132,6 +132,11 @@ const handleBack = async () => {
   }
 }
 
+const startGame = () => {
+  store.startGame()
+  drawBoard()
+}
+
 const drawBoard = () => {
   const canvas = boardRef.value
   if (!canvas) return
@@ -162,15 +167,20 @@ const drawBoard = () => {
 }
 
 const handleClick = (e: MouseEvent) => {
+  if (store.gameStatus !== 'playing') return
+  
   const canvas = boardRef.value
   if (!canvas) return
   const rect = canvas.getBoundingClientRect()
   const x = Math.floor((e.clientX - rect.left) / gridSize)
   const y = Math.floor((e.clientY - rect.top) / gridSize)
-  if (store.makeMove(x, y)) {
-    drawBoard()
-    if (store.winner !== 0) {
-      showWinner.value = true
+  
+  if (x >= 0 && x < 15 && y >= 0 && y < 15) {
+    if (store.makeMove(x, y)) {
+      drawBoard()
+      if (store.winner !== 0) {
+        showWinner.value = true
+      }
     }
   }
 }
