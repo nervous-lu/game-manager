@@ -125,6 +125,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMinesweeperStore } from '@/stores/minesweeper'
+import { showDialog } from 'vant'
 
 const router = useRouter()
 const store = useMinesweeperStore()
@@ -219,8 +220,6 @@ const stopTimer = () => {
   }
 }
 
-import { showDialog } from 'vant'  // 修改导入
-
 const handleBack = async () => {
   if (store.gameStatus === 'playing') {
     try {
@@ -245,6 +244,8 @@ const handleBack = async () => {
 
 const setDifficulty = (difficulty: string) => {
   store.setDifficulty(difficulty as 'easy' | 'medium' | 'hard')
+  stopTimer()
+  timeElapsed.value = 0
 }
 
 onMounted(() => {
