@@ -25,9 +25,6 @@ app.use(Dialog)
 app.use(RadioGroup)
 app.use(Radio)
 
-// 全局挂载 Dialog
-app.config.globalProperties.$dialog = Dialog
-
 app.use(pinia)
 app.use(router)
 app.mount('#app')

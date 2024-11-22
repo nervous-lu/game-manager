@@ -30,6 +30,16 @@ const router = createRouter({
       path: '/puzzle',
       name: 'Puzzle',
       component: () => import('@/views/Puzzle.vue')
+    },
+    {
+      path: '/game2048',
+      name: 'Game2048',
+      component: () => import('@/views/Game2048.vue')
+    },
+    {
+      path: '/memory',
+      name: 'Memory',
+      component: () => import('@/views/Memory.vue')
     }
   ]
 })
@@ -60,6 +70,14 @@ router.beforeEach(async (to: RouteLocationNormalized, from: RouteLocationNormali
     case 'Puzzle':
       const { usePuzzleStore } = await import('@/stores/puzzle')
       store = usePuzzleStore()
+      break
+    case 'Game2048':
+      const { useGame2048Store } = await import('@/stores/game2048')
+      store = useGame2048Store()
+      break
+    case 'Memory':
+      const { useMemoryStore } = await import('@/stores/memory')
+      store = useMemoryStore()
       break
   }
 
