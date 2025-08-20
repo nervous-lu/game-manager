@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { reactive, toRefs, computed } from 'vue'
+import { reactive, toRefs, computed, ref } from 'vue'
 
 interface WordPair {
   common: string
@@ -25,7 +25,7 @@ interface UndercoverState {
   gameEnded: boolean
   playerOptions: number[]
   votingRound: number
-  gameStatus: 'waiting' | 'playing' | 'won'
+  gameStatus: 'waiting' | 'playing' | 'voting' | 'won'
 }
 
 export const useUndercoverStore = defineStore('undercover', () => {
@@ -67,7 +67,7 @@ export const useUndercoverStore = defineStore('undercover', () => {
       {common: '电风扇', undercover: '空调'},
       {common: '袜子', undercover: '手套'},
       {common: '蛋炒饭', undercover: '扬州炒饭'},
-      {common: '手表', undercover: '时钟'},
+      {common: '手', undercover: '时钟'},
       {common: '船', undercover: '潜水艇'},
       {common: '音乐', undercover: '舞蹈'},
       {common: '面包', undercover: '蛋糕'},
@@ -95,7 +95,7 @@ export const useUndercoverStore = defineStore('undercover', () => {
       {common: '书法', undercover: '绘画'},
       {common: '手电筒', undercover: '蜡烛'},
       {common: '雨伞', undercover: '雨衣'},
-      {common: '熊猫', undercover: '北极熊'},
+      {common: '��极熊', undercover: '北极熊'},
       {common: '山竹', undercover: '榴莲'},
       {common: '草原', undercover: '沙漠'},
       {common: '笔记本', undercover: '平板电脑'},
@@ -120,8 +120,8 @@ export const useUndercoverStore = defineStore('undercover', () => {
       {common: '电脑', undercover: '服务器'},
       {common: '饭店', undercover: '快餐店'},
       {common: '石头', undercover: '鹅卵石'},
-      {common: '棒球', undercover: '垒球'},
-      {common: '树叶', undercover: '草叶'},
+      {common: '棒', undercover: '垒球'},
+      {common: '树叶', undercover: '草'},
       {common: '剪刀', undercover: '刀'},
       {common: '猴子', undercover: '猩猩'},
       {common: '手链', undercover: '项链'},
@@ -154,12 +154,17 @@ export const useUndercoverStore = defineStore('undercover', () => {
   const winner = computed(() => {
     const remaining = state.players.filter((player: Player) => !player.isEliminated)
     const undercoverCount = remaining.filter((player: Player) => player.isUndercover).length
-    return undercoverCount === 0 ? '平民胜利！' : '卧底胜利！'
+    return undercoverCount === 0 ? '平民胜利！' : '底胜利！'
   })
   
   const allPlayersViewed = computed(() => 
     state.players.every((player: Player) => player.viewed)
   )
+
+  const votes = ref<Record<number, number>>({})  // 记录每个玩家获得的票数
+  const votedPlayers = ref<number[]>([])  // 记录已投票的玩家
+  const currentVotingPlayer = ref<number>(-1)  // 当前投票的玩家
+  const votingRound = ref(1)  // 当前投票轮次
 
   function startGame() {
     state.gameStarted = true
@@ -232,6 +237,99 @@ export const useUndercoverStore = defineStore('undercover', () => {
     }
   }
 
+  function startVoting() {
+    if (state.gameStatus !== 'playing') return
+    
+    state.gameStatus = 'voting'
+    votes.value = {}
+    votedPlayers.value = []
+    currentVotingPlayer.value = state.players.findIndex(p => !p.isEliminated)
+    
+    // 如果没���找到有效的投票者，说明游戏应该结束
+    if (currentVotingPlayer.value === -1) {
+      checkGameEnd()
+    }
+  }
+
+  function vote(voterId: number, targetId: number) {
+    // 验证投票是否有效
+    if (
+      state.gameStatus !== 'voting' || // 不在投票阶段
+      state.players[targetId].isEliminated || // 目标已出局
+      votedPlayers.value.includes(voterId) || // 已经投过票
+      voterId !== currentVotingPlayer.value // 必须是当前投票玩家
+    ) {
+      return
+    }
+
+    // 记录投票
+    votedPlayers.value.push(voterId)
+    votes.value[targetId] = (votes.value[targetId] || 0) + 1
+
+    // 找到下一个未投票且未出局的玩家
+    let nextPlayer = -1
+    for (let i = 0; i < state.players.length; i++) {
+      const index = (currentVotingPlayer.value + i + 1) % state.players.length
+      if (!state.players[index].isEliminated && !votedPlayers.value.includes(index)) {
+        nextPlayer = index
+        break
+      }
+    }
+
+    currentVotingPlayer.value = nextPlayer
+
+    // 检查是否所有未出局玩家都已投票
+    const activePlayers = state.players.filter(p => !p.isEliminated)
+    if (votedPlayers.value.length === activePlayers.length) {
+      handleVoteResult()
+    }
+  }
+
+  function handleVoteResult() {
+    const activePlayers = state.players.filter(p => !p.isEliminated)
+    
+    // 找出票数最多的玩家
+    const maxVotes = Math.max(...Object.values(votes.value))
+    const eliminatedPlayers = Object.entries(votes.value)
+      .filter(([_, count]) => count === maxVotes)
+      .map(([id]) => parseInt(id))
+
+    if (eliminatedPlayers.length === 1 && maxVotes > activePlayers.length / 2) {
+      // 只有一个最高票且超过半数时才淘汰
+      const eliminatedId = eliminatedPlayers[0]
+      state.players[eliminatedId].isEliminated = true
+      votingRound.value++
+
+      // 检查游戏是否结束
+      checkGameEnd()
+    }
+
+    // 重置投票状态，准备下一轮
+    votes.value = {}
+    votedPlayers.value = []
+    
+    // 如果游戏未结束，找到下一个未出局的玩家作为起始投票者
+    if (state.gameStatus === 'voting') {
+      currentVotingPlayer.value = state.players.findIndex(p => !p.isEliminated)
+    }
+  }
+
+  function checkGameEnd() {
+    const remaining = state.players.filter(p => !p.isEliminated)
+    const undercoverCount = remaining.filter(p => p.isUndercover).length
+    const civilianCount = remaining.length - undercoverCount
+
+    if (undercoverCount === 0) {
+      // 平���胜利
+      state.gameStatus = 'won'
+      state.gameEnded = true
+    } else if (undercoverCount >= civilianCount) {
+      // 卧底胜利
+      state.gameStatus = 'won'
+      state.gameEnded = true
+    }
+  }
+
   return {
     ...toRefs(state),
     remainingPlayers,
@@ -244,6 +342,13 @@ export const useUndercoverStore = defineStore('undercover', () => {
     eliminatePlayer,
     resetGame,
     markPlayerViewed,
-    gameStatus: computed(() => state.gameStatus)
+    gameStatus: computed(() => state.gameStatus),
+    votes: computed(() => votes.value),
+    votedPlayers: computed(() => votedPlayers.value),
+    currentVotingPlayer: computed(() => currentVotingPlayer.value),
+    votingRound: computed(() => votingRound.value),
+    startVoting,
+    vote,
+    handleVoteResult
   }
 })

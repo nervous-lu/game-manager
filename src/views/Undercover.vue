@@ -43,11 +43,7 @@
               </div>
               <div class="rule-item">
                 <van-icon name="circle" />
-                <span>每人有5秒时间查看身份</span>
-              </div>
-              <div class="rule-item">
-                <van-icon name="circle" />
-                <span>共有3轮投票机会</span>
+                <span>每人有4秒时间查看身份</span>
               </div>
               <div class="rule-item">
                 <van-icon name="circle" />
@@ -130,44 +126,98 @@
           </template>
 
           <template v-else>
-            <div class="vote-panel">
-              <div class="vote-header">
-                <h3>投票环节</h3>
-                <div class="vote-progress">
-                  <span class="round">第 {{ store.votingRound + 1 }} 轮</span>
-                  <div class="progress-bar">
-                    <div 
-                      class="progress" 
-                      :style="{ width: `${(store.votingRound / store.maxVotingRounds) * 100}%` }"
-                    ></div>
-                  </div>
-                  <span class="total">共 {{ store.maxVotingRounds }} 轮</span>
+            <div v-if="store.gameStatus === 'voting'" class="voting-section">
+              <div class="voting-title">
+                <span class="icon">🗳️</span>
+                <span>第 {{ store.votingRound }} 轮投票</span>
+              </div>
+
+              <div class="voting-info">
+                <div class="current-voter">
+                  当前投票: 玩家{{ store.currentVotingPlayer + 1 }}
+                </div>
+                <div class="hint">
+                  {{ store.votedPlayers.includes(store.currentVotingPlayer) 
+                    ? '等待其他玩家投票' 
+                    : '请选择你认为是卧底的玩家' }}
                 </div>
               </div>
-              
-              <div class="vote-grid">
+
+              <div class="player-grid">
                 <div
                   v-for="player in store.players"
                   :key="player.id"
                   :class="[
-                    'vote-card',
-                    player.isEliminated ? 'eliminated' : '',
-                    player.votes > 0 ? 'has-votes' : ''
+                    'player-card',
+                    { 
+                      'eliminated': player.isEliminated,
+                      'selected': selectedPlayer === player.id,
+                      'has-votes': store.votes[player.id],
+                      'current-voter': store.currentVotingPlayer === player.id,
+                      'disabled': player.isEliminated
+                    }
                   ]"
-                  @click="!player.isEliminated && store.eliminatePlayer(player.id)"
+                  @click="handleVote(player)"
                 >
                   <div class="player-icon">
                     {{ player.isEliminated ? '❌' : '👤' }}
                   </div>
                   <div class="player-name">玩家{{ player.id + 1 }}</div>
-                  <div class="vote-count" v-if="player.votes > 0">
-                    {{ player.votes }} 票
+                  <div class="player-status">
+                    <template v-if="player.isEliminated">
+                      已出局
+                    </template>
+                    <template v-else-if="store.votes[player.id]">
+                      {{ store.votes[player.id] }} 票
+                    </template>
+                    <template v-else>
+                      等待投票
+                    </template>
                   </div>
-                  <div class="vote-button" v-if="!player.isEliminated">
-                    投票淘汰
+                  <div v-if="store.votes[player.id]" class="vote-count">
+                    {{ store.votes[player.id] }}
                   </div>
                 </div>
               </div>
+
+              <div class="voting-controls">
+                <van-button 
+                  type="primary" 
+                  block 
+                  size="large"
+                  :disabled="selectedPlayer === null || 
+                            store.votedPlayers.includes(store.currentVotingPlayer) ||
+                            selectedPlayer === store.currentVotingPlayer"
+                  @click="confirmVote"
+                >
+                  {{ store.votedPlayers.includes(store.currentVotingPlayer) 
+                    ? '已投票' 
+                    : (selectedPlayer !== null ? '确认投票' : '请选择玩家') 
+                  }}
+                </van-button>
+              </div>
+
+              <van-dialog
+                v-model:show="showVoteResult"
+                :title="voteResultTitle"
+                :message="voteResultMessage"
+                theme="round-button"
+                confirmButtonText="继续游戏"
+                :showCancelButton="false"
+                @confirm="store.handleVoteResult"
+              >
+                <div class="vote-result-info">
+                  <div class="result-icon">{{ voteResultIcon }}</div>
+                  <div class="eliminated-player">
+                    {{ eliminatedPlayer ? `${eliminatedPlayer.id}号玩家出局` : '' }}
+                  </div>
+                  <div class="vote-stats">
+                    <div v-for="(count, playerId) in voteStats" :key="playerId">
+                      {{ playerId }}号: {{ count }}票
+                    </div>
+                  </div>
+                </div>
+              </van-dialog>
             </div>
           </template>
         </template>
@@ -175,7 +225,7 @@
         <template v-if="store.gameEnded">
           <div class="result-panel">
             <div class="result-icon">
-              {{ store.winner.includes('平民') ? '👨‍👩‍👦‍👦' : '🕵️' }}
+              {{ store.winner.includes('平民') ? '👨‍👩👦‍' : '🕵️' }}
             </div>
             <h2>游戏结束</h2>
             <p>{{ store.winner }}</p>
@@ -203,7 +253,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { ref, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUndercoverStore } from '@/stores/undercover'
 import { showDialog } from 'vant'  // 修改导入
@@ -215,6 +265,87 @@ const showWord = ref<boolean>(false)
 let timerInterval: number | null = null
 const gamePhase = ref<'view' | 'vote'>('view')
 const allPlayersViewed = ref<boolean>(false)
+
+// 添加投票相关的状态
+const selectedPlayer = ref<number | null>(null)
+const showVoteResult = ref(false)
+const voteStats = ref<Record<number, number>>({})
+const eliminatedPlayer = ref<{ id: number } | null>(null)
+
+// 投票结果相关的计算属性
+const voteResultTitle = computed(() => {
+  return eliminatedPlayer.value ? '投票结果' : '平局'
+})
+
+const voteResultMessage = computed(() => {
+  return eliminatedPlayer.value 
+    ? `${eliminatedPlayer.value.id}号玩家被投票出局` 
+    : '票数相同，请重新投票'
+})
+
+const voteResultIcon = computed(() => {
+  return eliminatedPlayer.value ? '🗳️' : '🤝'
+})
+
+// 投票相关的方法
+const handleVote = (player: any) => {
+  console.log('=== handleVote ===')
+  console.log('当前投票玩家:', store.currentVotingPlayer + 1)
+  console.log('被选中玩家:', player.id + 1)
+  console.log('已投票玩家:', store.votedPlayers)
+  console.log('游戏状态:', store.gameStatus)
+  
+  // 如果当前不是投票阶段，直接返回
+  if (store.gameStatus !== 'voting') return
+  
+  // 如果已经投过票，直接返回
+  if (store.votedPlayers.includes(store.currentVotingPlayer)) {
+    console.log('该玩家已经投过票')
+    return
+  }
+  
+  // 如果是已淘汰的玩家，直接返回
+  if (player.isEliminated) {
+    console.log('目标玩家已淘汰')
+    return
+  }
+  
+  // 如果是当前投票玩家自己，直接返回
+  if (player.id === store.currentVotingPlayer) {
+    console.log('不能投票给自己')
+    return
+  }
+  
+  // 设置选中的玩家
+  selectedPlayer.value = player.id
+  console.log('选中玩家:', selectedPlayer.value + 1)
+}
+
+const confirmVote = () => {
+  console.log('=== confirmVote ===')
+  console.log('当前投票玩家:', store.currentVotingPlayer + 1)
+  console.log('选中的目标:', selectedPlayer.value ? selectedPlayer.value + 1 : null)
+  console.log('已投票玩家:', store.votedPlayers.map(id => id + 1))
+  
+  if (!selectedPlayer.value || 
+      store.votedPlayers.includes(store.currentVotingPlayer) ||
+      selectedPlayer.value === store.currentVotingPlayer) {
+    console.log('投票无效:', {
+      noSelection: !selectedPlayer.value,
+      alreadyVoted: store.votedPlayers.includes(store.currentVotingPlayer),
+      voteSelf: selectedPlayer.value === store.currentVotingPlayer
+    })
+    return
+  }
+  
+  const targetId = selectedPlayer.value
+  store.vote(store.currentVotingPlayer, targetId)
+  console.log('投票完成')
+  // 只有在投票成功后才清空选择
+  if (!store.votedPlayers.includes(store.currentVotingPlayer)) {
+    selectedPlayer.value = null
+  }
+}
 
 const handleBack = async () => {
   if (store.gameStatus === 'playing') {
@@ -277,6 +408,7 @@ const viewCard = (playerId: number) => {
 
 const startVoting = () => {
   gamePhase.value = 'vote'
+  store.startVoting()
 }
 
 // 组件卸载时清理
@@ -285,7 +417,7 @@ onUnmounted(() => {
 })
 
 const getPlayerDesc = (count: number): string => {
-  return `${count - 1}平民 1卧底`
+  return `${count - 1}平民 1底`
 }
 </script>
 
@@ -496,7 +628,15 @@ const getPlayerDesc = (count: number): string => {
       }
 
       &.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
         pointer-events: none;
+      }
+
+      &.selected {
+        border: 2px solid var(--primary-color);
+        transform: scale(1.05);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
       }
 
       .player-icon {
@@ -765,5 +905,208 @@ const getPlayerDesc = (count: number): string => {
       }
     }
   }
+}
+
+.voting-section {
+  .voting-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    font-size: 20px;
+    font-weight: bold;
+    
+    .icon {
+      font-size: 24px;
+    }
+  }
+
+  .voting-info {
+    text-align: center;
+    margin-bottom: 24px;
+    
+    .current-voter {
+      font-size: 18px;
+      font-weight: bold;
+      color: var(--primary-color);
+      margin-bottom: 8px;
+    }
+
+    .hint {
+      font-size: 14px;
+      color: #666;
+    }
+  }
+
+  .player-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+
+    .player-card {
+      position: relative;
+      padding: 16px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: var(--card-shadow);
+      cursor: pointer;
+      transition: all 0.3s ease;
+
+      &:not(.eliminated):hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+      }
+
+      &.selected {
+        border: 2px solid var(--primary-color);
+        transform: scale(1.05);
+      }
+
+      &.eliminated {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .player-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+
+        .player-number {
+          font-size: 18px;
+          font-weight: bold;
+        }
+
+        .player-status {
+          .eliminated-tag {
+            font-size: 12px;
+            color: #ff4d4f;
+          }
+
+          .voted-count {
+            font-size: 14px;
+            color: var(--primary-color);
+            font-weight: bold;
+          }
+        }
+      }
+
+      .vote-animation {
+        position: absolute;
+        top: -20px;
+        left: 50%;
+        transform: translateX(-50%);
+        animation: voteUp 1s ease-out;
+
+        .vote-icon {
+          font-size: 24px;
+        }
+      }
+    }
+  }
+}
+
+@keyframes voteUp {
+  0% {
+    transform: translateX(-50%) translateY(20px);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-50%) translateY(-20px);
+    opacity: 0;
+  }
+}
+
+.player-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+
+  .player-card {
+    position: relative;
+    padding: 20px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: var(--card-shadow);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-align: center;
+
+    &:not(.eliminated):hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    }
+
+    &.selected {
+      border: 2px solid var(--primary-color);
+      transform: scale(1.05);
+      background: linear-gradient(145deg, #e8f4ff, #f5f9ff);
+    }
+
+    &.eliminated {
+      opacity: 0.5;
+      cursor: not-allowed;
+      background: #f5f5f5;
+      
+      .player-icon {
+        color: #ff4d4f;
+      }
+    }
+
+    &.current-voter {
+      border: 2px dashed var(--primary-color);
+      animation: pulse 2s infinite;
+    }
+
+    &.has-votes {
+      .vote-count {
+        position: absolute;
+        top: -8px;
+        right: -8px;
+        width: 24px;
+        height: 24px;
+        background: var(--primary-color);
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: bold;
+        animation: popIn 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+      }
+    }
+
+    .player-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+    }
+
+    .player-name {
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .player-status {
+      font-size: 14px;
+      color: #666;
+    }
+  }
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(var(--primary-color-rgb), 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(var(--primary-color-rgb), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--primary-color-rgb), 0); }
+}
+
+@keyframes popIn {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 </style> 
