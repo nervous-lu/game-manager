@@ -4,7 +4,8 @@ import Home from '@/views/Home.vue'
 import type { RouteLocationNormalized, NavigationGuardNext } from 'vue-router'
 
 const router = createRouter({
-  history: createWebHistory(),
+  // 使用与 vite.config.ts 中相同的 base 路径，确保打包后路由正常工作
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
@@ -106,4 +107,4 @@ router.beforeEach(async (to: RouteLocationNormalized, from: RouteLocationNormali
   }
 })
 
-export default router 
+export default router
